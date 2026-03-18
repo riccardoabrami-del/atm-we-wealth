@@ -1,24 +1,28 @@
-name: Run ATM We Wealth
+name: Run BYNIGHTS every day
 
 on:
-  workflow_dispatch:        # lo lanci a mano dal tab Actions
+  schedule:
+    - cron: "30 9 * * *"   # 09:30 UTC = 10:30 CET
+  workflow_dispatch:
 
 jobs:
-  run-atm:
+  run-bynights:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
 
-      - name: Install deps (se servono)
+      - name: Install dependencies
         run: |
-          npm install || echo "Nessun package.json, salto install"
+          npm install
+          npx playwright install --with-deps
 
-      - name: Run atm-we-wealth.js
-        run: node atm-we-wealth.js
+      - name: Run BYNIGHTS script
+        run: |
+          node main.js
