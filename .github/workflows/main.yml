@@ -1,6 +1,4 @@
-- name: Run BYNIGHTS script
-  run: |
-    npm start
+name: Run BYNIGHTS script
 
 on:
   schedule:
@@ -27,4 +25,4 @@ jobs:
 
       - name: Run BYNIGHTS script
         run: |
-          node main.js
+          npm start
