@@ -4,7 +4,7 @@
   "main": "atm-we-wealth.js",
   "license": "MIT",
   "scripts": {
-    "start": "node atm-we-wealth.js"
+    "start": "node main.js"
   },
   "dependencies": {
     "playwright": "^1.48.0"
