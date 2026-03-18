@@ -23,7 +23,29 @@ async function runWeWealthFlowInPage(page) {
     console.log('Errore cookie:', e);
   }
 
-  // ... qui puoi aggiungere il resto del flow ...
+  // chiudi eventuale pubblicità con la X
+  try {
+    const closeAdBtn = await page.$('#banner_interstitial_close_b');
+    if (closeAdBtn) {
+      await closeAdBtn.click();
+      console.log('Pubblicità chiusa.');
+    } else {
+      console.log('Nessun banner pubblicità trovato.');
+    }
+  } catch (e) {
+    console.log('Errore chiusura pubblicità:', e);
+  }
+
+  // --- resto del flow: qui continua SEMPRE, anche se non ci sono cookie/pubblicità ---
+  try {
+    // esempio: aspetta ancora un attimo e fai altri step
+    await page.waitForTimeout(3000);
+
+    // qui aggiungi gli step BYNIGHTS veri (click, form, scroll, ecc.)
+    console.log('Proseguo con il resto del flow...');
+  } catch (e) {
+    console.log('Errore nel resto del flow:', e);
+  }
 }
 
 async function main() {
