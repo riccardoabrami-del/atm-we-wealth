@@ -1,10 +1,10 @@
 {
-  "name": "atm-bynights",
+  "name": "atm-we-wealth",
   "version": "1.0.0",
-  "main": "main.js",
+  "main": "atm-we-wealth.js",
   "license": "MIT",
   "scripts": {
-    "start": "node main.js"
+    "start": "node atm-we-wealth.js"
   },
   "dependencies": {
     "playwright": "^1.48.0"
