@@ -1,7 +1,15 @@
 // main.js
 import { chromium } from 'playwright';
 
-async function runWeWealthFlowInPage(page) {
+async function main() {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+
+  // entra su questo indirizzo
+  console.log('Vado su we-wealth...');
+  await page.goto('https://www.we-wealth.com/it', { waitUntil: 'load' });
+  console.log('Pagina caricata.');
+
   // aspetta 10 secondi per sicurezza
   await page.waitForTimeout(10000);
 
@@ -40,23 +48,11 @@ async function runWeWealthFlowInPage(page) {
   try {
     await page.waitForTimeout(3000);
 
-    // TODO: qui aggiungi gli step BYNIGHTS veri
+    // qui aggiungi gli step BYNIGHTS veri (click, form, ecc.)
     console.log('Proseguo con il resto del flow...');
   } catch (e) {
     console.log('Errore nel resto del flow:', e);
   }
-}
-
-async function main() {
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-
-  // entra su questo indirizzo
-  console.log('Vado su we-wealth...');
-  await page.goto('https://www.we-wealth.com/it', { waitUntil: 'load' });
-  console.log('Pagina caricata.');
-
-  await runWeWealthFlowInPage(page);
 
   await browser.close();
 }
