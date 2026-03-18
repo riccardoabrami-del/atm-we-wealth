@@ -1,4 +1,6 @@
-name: Run BYNIGHTS every day
+- name: Run BYNIGHTS script
+  run: |
+    npm start
 
 on:
   schedule:
