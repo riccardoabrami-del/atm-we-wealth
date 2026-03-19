@@ -1,7 +1,27 @@
 // main.js
 import { chromium } from 'playwright';
 
-// genera email riccardo.abrami+XYZ@we-wealth.com
+// helper: esegue una funzione dentro la pagina
+async function waitForElementOnPage(page, selector, timeoutMs) {
+  return await page.evaluate(
+    (selector, timeoutMs) =>
+      new Promise((resolve, reject) => {
+        const start = Date.now();
+        (function check() {
+          const el = document.querySelector(selector);
+          if (el) return resolve(selector);
+          if (Date.now() - start > timeoutMs) {
+            return reject(new Error('Timeout in attesa di ' + selector));
+          }
+          requestAnimationFrame(check);
+        })();
+      }),
+    selector,
+    timeoutMs
+  );
+}
+
+// genera email riccardo.abrami+XXX@we-wealth.com
 function generaEmailWeWealth() {
   const n1 = Math.floor(Math.random() * 10);
   const n2 = Math.floor(Math.random() * 10);
@@ -17,86 +37,77 @@ async function main() {
   await page.goto('https://www.we-wealth.com/it', { waitUntil: 'load' });
   console.log('Pagina caricata.');
 
-  // aspetta 10 secondi per sicurezza
+  // 1.b aspetta 10 secondi
   await page.waitForTimeout(10000);
 
-  // 1) accetta cookie (best effort)
+  // accetta i cookie (stessa logica del codice da console)
   try {
-    const cookieBtn = await page.$(
-      'button[aria-label*="Accetta"], ' +
-      'button[aria-label*="accept"], ' +
-      '.cookie-accept, ' +
-      'button.accept'
-    );
-    if (cookieBtn) {
-      await cookieBtn.click();
-      console.log('Cookie accettati.');
-      await page.waitForTimeout(1000);
-    } else {
-      console.log('Nessun pulsante cookie trovato.');
-    }
+    await page.evaluate(() => {
+      const cookieBtn = document.querySelector(
+        'button[aria-label*="Accetta"], button[aria-label*="accept"], .cookie-accept, button.accept'
+      );
+      if (cookieBtn) {
+        cookieBtn.click();
+        console.log('Cookie accettati.');
+      } else {
+        console.log('Nessun pulsante cookie trovato.');
+      }
+    });
   } catch (e) {
     console.log('Errore cookie:', e);
   }
 
-  // 2) chiudi eventuale pubblicità con la X (se esiste)
+  // STEP 2: aspetta il link .btn-accedi.otp-popup-button e cliccalo
   try {
-    const closeAdBtn = await page.$('#banner_interstitial_close_b');
-    if (closeAdBtn) {
-      await closeAdBtn.click();
-      console.log('Pubblicità chiusa.');
-      await page.waitForTimeout(1000);
-    } else {
-      console.log('Nessun banner pubblicità trovato.');
-    }
-  } catch (e) {
-    console.log('Errore chiusura pubblicità:', e);
-  }
-
-  // --- RESTO DEL FLOW BYNIGHTS ---
-
-  // 2.a clicca link .btn-accedi.otp-popup-button
-  try {
-    const accediLink = await page.waitForSelector('a.btn-accedi.otp-popup-button', {
-      timeout: 60000
+    await waitForElementOnPage(page, 'a.btn-accedi.otp-popup-button', 60000);
+    await page.evaluate(() => {
+      const accediLink = document.querySelector('a.btn-accedi.otp-popup-button');
+      if (accediLink) accediLink.click();
     });
-    await accediLink.click();
     console.log('Link .btn-accedi.otp-popup-button cliccato.');
   } catch (e) {
     console.log('Errore link accedi:', e.message);
   }
 
-  // 2.b clicca bottone "Accedi o registrati" (#otp-submit-button)
+  // 2.b clicca il bottone "Accedi o registrati" (#otp-submit-button)
   try {
-    const accediRegBtn = await page.waitForSelector('#otp-submit-button', {
-      timeout: 60000
+    await waitForElementOnPage(page, '#otp-submit-button', 60000);
+    await page.evaluate(() => {
+      const accediRegBtn = document.querySelector('#otp-submit-button');
+      if (accediRegBtn) accediRegBtn.click();
     });
-    await accediRegBtn.click();
     console.log('Bottone "Accedi o registrati" cliccato (fase pre-email).');
   } catch (e) {
     console.log('Errore bottone Accedi o registrati (pre-email):', e.message);
   }
 
-  // 3) genera email univoca
+  // STEP 3: genera email univoca
   const email = generaEmailWeWealth();
   console.log('Email generata:', email);
 
-  // 3.b inserisci l’email in #otp-email
+  // 3.b inserisci l’email nel contenitore #otp-email
   try {
-    const emailInput = await page.waitForSelector('#otp-email', { timeout: 60000 });
-    await emailInput.fill('');
-    await emailInput.type(email, { delay: 50 });
-    console.log('Email inserita in #otp-email:', email);
+    await waitForElementOnPage(page, '#otp-email', 60000);
+    await page.evaluate((email) => {
+      const emailInput = document.querySelector('#otp-email');
+      if (emailInput) {
+        emailInput.value = email;
+        emailInput.dispatchEvent(new Event('input', { bubbles: true }));
+        emailInput.dispatchEvent(new Event('change', { bubbles: true }));
+        console.log('Email inserita in #otp-email:', email);
+      }
+    }, email);
   } catch (e) {
     console.log('Errore campo email #otp-email:', e.message);
   }
 
-  // 3.c clicca bottone "Invia codice via email" (#otp-start-process)
+  // 3.c clicca il bottone "Invia codice via email"
   try {
-    const inviaCodiceBtn = await page.waitForSelector('#otp-start-process', {
-      timeout: 60000
+    await waitForElementOnPage(page, '#otp-start-process', 60000);
+    await page.evaluate(() => {
+      const inviaCodiceBtn = document.querySelector('#otp-start-process');
+      if (inviaCodiceBtn) inviaCodiceBtn.click();
     });
-    await inviaCodiceBtn.click();
     console.log('Bottone "Invia codice via email" cliccato.');
   } catch (e) {
     console.log('Errore bottone invia codice:', e.message);
@@ -106,7 +117,7 @@ async function main() {
   await browser.close();
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
