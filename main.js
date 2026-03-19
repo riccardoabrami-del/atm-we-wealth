@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 // helper: esegue una funzione dentro la pagina
 async function waitForElementOnPage(page, selector, timeoutMs) {
   return await page.evaluate(
-    (selector, timeoutMs) =>
+    ({ selector, timeoutMs }) =>
       new Promise((resolve, reject) => {
         const start = Date.now();
         (function check() {
@@ -16,8 +16,7 @@ async function waitForElementOnPage(page, selector, timeoutMs) {
           requestAnimationFrame(check);
         })();
       }),
-    selector,
-    timeoutMs
+    { selector, timeoutMs } // <‑ UN SOLO ARGOMENTO (oggetto)
   );
 }
 
@@ -40,7 +39,7 @@ async function main() {
   // 1.b aspetta 10 secondi
   await page.waitForTimeout(10000);
 
-  // accetta i cookie (stessa logica del codice da console)
+  // accetta i cookie
   try {
     await page.evaluate(() => {
       const cookieBtn = document.querySelector(
@@ -88,7 +87,7 @@ async function main() {
   // 3.b inserisci l’email nel contenitore #otp-email
   try {
     await waitForElementOnPage(page, '#otp-email', 60000);
-    await page.evaluate((email) => {
+    await page.evaluate(({ email }) => {
       const emailInput = document.querySelector('#otp-email');
       if (emailInput) {
         emailInput.value = email;
@@ -96,7 +95,7 @@ async function main() {
         emailInput.dispatchEvent(new Event('change', { bubbles: true }));
         console.log('Email inserita in #otp-email:', email);
       }
-    }, email);
+    }, { email });
   } catch (e) {
     console.log('Errore campo email #otp-email:', e.message);
   }
