@@ -1,26 +1,13 @@
-// main.js
-import { chromium } from 'playwright';
+const { chromium, devices } = require('playwright');
+const fs = require('fs');
+const Imap = require('imap');
+const { simpleParser } = require('mailparser');
+const nodemailer = require('nodemailer');
 
-// helper: esegue una funzione dentro la pagina
-async function waitForElementOnPage(page, selector, timeoutMs) {
-  return await page.evaluate(
-    ({ selector, timeoutMs }) =>
-      new Promise((resolve, reject) => {
-        const start = Date.now();
-        (function check() {
-          const el = document.querySelector(selector);
-          if (el) return resolve(selector);
-          if (Date.now() - start > timeoutMs) {
-            return reject(new Error('Timeout in attesa di ' + selector));
-          }
-          requestAnimationFrame(check);
-        })();
-      }),
-    { selector, timeoutMs } // <‑ UN SOLO ARGOMENTO (oggetto)
-  );
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// genera email riccardo.abrami+XXX@we-wealth.com
 function generaEmailWeWealth() {
   const n1 = Math.floor(Math.random() * 10);
   const n2 = Math.floor(Math.random() * 10);
@@ -28,95 +15,507 @@ function generaEmailWeWealth() {
   return `riccardo.abrami+${n1}${n2}${n3}@we-wealth.com`;
 }
 
-async function main() {
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-
-  console.log('Vado su we-wealth...');
-  await page.goto('https://www.we-wealth.com/it', { waitUntil: 'load' });
-  console.log('Pagina caricata.');
-
-  // 1.b aspetta 10 secondi
-  await page.waitForTimeout(10000);
-
-  // accetta i cookie
-  try {
-    await page.evaluate(() => {
-      const cookieBtn = document.querySelector(
-        'button[aria-label*="Accetta"], button[aria-label*="accept"], .cookie-accept, button.accept'
-      );
-      if (cookieBtn) {
-        cookieBtn.click();
-        console.log('Cookie accettati.');
-      } else {
-        console.log('Nessun pulsante cookie trovato.');
-      }
-    });
-  } catch (e) {
-    console.log('Errore cookie:', e);
-  }
-
-  // STEP 2: aspetta il link .btn-accedi.otp-popup-button e cliccalo
-  try {
-    await waitForElementOnPage(page, 'a.btn-accedi.otp-popup-button', 60000);
-    await page.evaluate(() => {
-      const accediLink = document.querySelector('a.btn-accedi.otp-popup-button');
-      if (accediLink) accediLink.click();
-    });
-    console.log('Link .btn-accedi.otp-popup-button cliccato.');
-  } catch (e) {
-    console.log('Errore link accedi:', e.message);
-  }
-
-  // 2.b clicca il bottone "Accedi o registrati" (#otp-submit-button)
-  try {
-    await waitForElementOnPage(page, '#otp-submit-button', 60000);
-    await page.evaluate(() => {
-      const accediRegBtn = document.querySelector('#otp-submit-button');
-      if (accediRegBtn) accediRegBtn.click();
-    });
-    console.log('Bottone "Accedi o registrati" cliccato (fase pre-email).');
-  } catch (e) {
-    console.log('Errore bottone Accedi o registrati (pre-email):', e.message);
-  }
-
-  // STEP 3: genera email univoca
-  const email = generaEmailWeWealth();
-  console.log('Email generata:', email);
-
-  // 3.b inserisci l’email nel contenitore #otp-email
-  try {
-    await waitForElementOnPage(page, '#otp-email', 60000);
-    await page.evaluate(({ email }) => {
-      const emailInput = document.querySelector('#otp-email');
-      if (emailInput) {
-        emailInput.value = email;
-        emailInput.dispatchEvent(new Event('input', { bubbles: true }));
-        emailInput.dispatchEvent(new Event('change', { bubbles: true }));
-        console.log('Email inserita in #otp-email:', email);
-      }
-    }, { email });
-  } catch (e) {
-    console.log('Errore campo email #otp-email:', e.message);
-  }
-
-  // 3.c clicca il bottone "Invia codice via email"
-  try {
-    await waitForElementOnPage(page, '#otp-start-process', 60000);
-    await page.evaluate(() => {
-      const inviaCodiceBtn = document.querySelector('#otp-start-process');
-      if (inviaCodiceBtn) inviaCodiceBtn.click();
-    });
-    console.log('Bottone "Invia codice via email" cliccato.');
-  } catch (e) {
-    console.log('Errore bottone invia codice:', e.message);
-  }
-
-  console.log('Flow completato, chiudo il browser.');
-  await browser.close();
+function randomChoice(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+function randomFirstName() {
+  return randomChoice(['Luca', 'Marco', 'Andrea', 'Paolo', 'Davide', 'Matteo']);
+}
+
+function randomLastName() {
+  return randomChoice(['Rossi', 'Bianchi', 'Romano', 'Esposito', 'Ricci', 'Conti']);
+}
+
+async function saveDebug(page, name) {
+  try {
+    await page.screenshot({ path: `${name}.png`, fullPage: true });
+  } catch (_) {}
+  try {
+    const html = await page.content();
+    fs.writeFileSync(`${name}.html`, html || '', 'utf8');
+  } catch (_) {}
+  console.log(`Debug salvato: ${name}.png / ${name}.html`);
+}
+
+async function jsClick(page, selector) {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (el) {
+      el.click();
+      return true;
+    }
+    return false;
+  }, selector);
+}
+
+async function closePossibleOverlays(page) {
+  const selectors = [
+    'button[aria-label="Close"]',
+    'button[aria-label="Chiudi"]',
+    '.iubenda-cs-close-btn',
+    '.iubenda-cs-accept-btn',
+    '#iubenda-cs-accept-btn',
+    '.cc-btn',
+    '.cookie-accept',
+    '.cookie-banner-accept'
+  ];
+
+  for (const sel of selectors) {
+    try {
+      const loc = page.locator(sel).first();
+      if (await loc.isVisible().catch(() => false)) {
+        await loc.click({ force: true }).catch(() => {});
+        await wait(500);
+      }
+    } catch (_) {}
+  }
+}
+
+function getGmailCreds() {
+  const user =
+    process.env.EMAIL_USER ||
+    process.env.email_user ||
+    process.env.GMAIL_USER ||
+    '';
+  const pass =
+    process.env.EMAIL_APP_PASSWORD ||
+    process.env.EMAIL_USER_PASSWORD ||
+    process.env.gmail_app_password ||
+    '';
+  return { user, pass };
+}
+
+function extractOtp(text) {
+  if (!text) return null;
+
+  const patterns = [
+    /\b(\d{6})\b/,
+    /codice[^0-9]{0,20}(\d{6})/i,
+    /otp[^0-9]{0,20}(\d{6})/i,
+    /verification code[^0-9]{0,20}(\d{6})/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return match[1];
+  }
+
+  return null;
+}
+
+async function readLatestOtpFromGmailIMAP(expectedEmail) {
+  const { user, pass } = getGmailCreds();
+
+  if (!user || !pass) {
+    console.log('[IMAP] Credenziali Gmail non presenti.');
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    const imap = new Imap({
+      user,
+      password: pass,
+      host: 'imap.gmail.com',
+      port: 993,
+      tls: true,
+      connTimeout: 30000,
+      authTimeout: 30000,
+      tlsOptions: { rejectUnauthorized: false }
+    });
+
+    let resolved = false;
+
+    const done = (value) => {
+      if (!resolved) {
+        resolved = true;
+        try { imap.end(); } catch (_) {}
+        resolve(value);
+      }
+    };
+
+    imap.once('ready', () => {
+      imap.openBox('INBOX', true, (err) => {
+        if (err) {
+          console.error('[IMAP] Errore openBox:', err);
+          return done(null);
+        }
+
+        imap.search(['ALL'], (err, results) => {
+          if (err) {
+            console.error('[IMAP] Errore search:', err);
+            return done(null);
+          }
+
+          if (!results || !results.length) {
+            console.log('[IMAP] Nessuna email trovata.');
+            return done(null);
+          }
+
+          const latestIds = results.slice(-10);
+          const fetch = imap.fetch(latestIds, { bodies: '' });
+          const emails = [];
+
+          fetch.on('message', (msg, seqno) => {
+            let rawBuffer = '';
+
+            msg.on('body', (stream) => {
+              stream.on('data', (chunk) => {
+                rawBuffer += chunk.toString('utf8');
+              });
+            });
+
+            msg.once('attributes', (attrs) => {
+              emails.push({
+                seqno,
+                raw: () => rawBuffer,
+                date: attrs.date || new Date(0)
+              });
+            });
+          });
+
+          fetch.once('error', (err) => {
+            console.error('[IMAP] Errore fetch:', err);
+            done(null);
+          });
+
+          fetch.once('end', async () => {
+            try {
+              emails.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+              for (const item of emails) {
+                const mail = await simpleParser(item.raw());
+                const subject = mail.subject || '';
+                const text = mail.text || '';
+                const html = typeof mail.html === 'string' ? mail.html : '';
+                const combined = `${subject}\n${text}\n${html}`;
+
+                const isRelevant =
+                  combined.toLowerCase().includes('we-wealth') ||
+                  combined.toLowerCase().includes('wewealth') ||
+                  combined.toLowerCase().includes('otp') ||
+                  combined.toLowerCase().includes('codice') ||
+                  combined.toLowerCase().includes(expectedEmail.toLowerCase());
+
+                if (!isRelevant) continue;
+
+                const otp = extractOtp(combined);
+                if (otp) {
+                  console.log(`[IMAP] OTP trovata: ${otp}`);
+                  return done(otp);
+                }
+              }
+
+              console.log('[IMAP] Nessuna OTP trovata nelle ultime email.');
+              done(null);
+            } catch (e) {
+              console.error('[IMAP] Errore parsing email:', e);
+              done(null);
+            }
+          });
+        });
+      });
+    });
+
+    imap.once('error', (err) => {
+      console.error('[IMAP] Errore connessione IMAP:', err);
+      done(null);
+    });
+
+    imap.once('end', () => {
+      if (!resolved) done(null);
+    });
+
+    imap.connect();
+  });
+}
+
+async function pollOtpFromGmail(expectedEmail, attempts = 12, delayMs = 10000) {
+  for (let i = 0; i < attempts; i++) {
+    console.log(`[IMAP] Tentativo lettura OTP ${i + 1}/${attempts}...`);
+    const otp = await readLatestOtpFromGmailIMAP(expectedEmail);
+    if (otp) return otp;
+    await wait(delayMs);
+  }
+  return null;
+}
+
+async function sendSuccessEmail(screenshotPath) {
+  const { user, pass } = getGmailCreds();
+
+  if (!user || !pass) {
+    console.log('[MAIL] Credenziali Gmail non presenti, salto invio email.');
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user, pass }
+  });
+
+  await transporter.sendMail({
+    from: user,
+    to: 'milanotoonight@gmail.com',
+    subject: 'Registrazione confermata',
+    text: 'Registrazione confermata',
+    attachments: [
+      {
+        filename: 'registrazione-confermata.png',
+        path: screenshotPath
+      }
+    ]
+  });
+
+  console.log('[MAIL] Email inviata con screenshot allegato.');
+}
+
+async function waitForEitherRegistrationOrSuccess(page) {
+  for (let i = 0; i < 20; i++) {
+    const fnameVisible = await page.locator('#fname').isVisible().catch(() => false);
+    const lnameVisible = await page.locator('#lname').isVisible().catch(() => false);
+    const signupVisible = await page.locator('#otp-register-start').isVisible().catch(() => false);
+
+    if (fnameVisible || lnameVisible || signupVisible) return 'registration';
+
+    const successVisible =
+      await page.locator('text=Thank you').first().isVisible().catch(() => false) ||
+      await page.locator('text=For registering').first().isVisible().catch(() => false) ||
+      await page.locator('text=Welcome back to the We-Wealth World').first().isVisible().catch(() => false) ||
+      await page.locator('button:has-text("COMPLETE"), button:has-text("CLOSE")').first().isVisible().catch(() => false);
+
+    if (successVisible) return 'success';
+
+    await wait(1500);
+  }
+
+  return 'unknown';
+}
+
+async function fillRegistrationForm(page) {
+  console.log('[FORM] Attendo i campi reali del form...');
+  await page.locator('#fname').waitFor({ state: 'visible', timeout: 30000 });
+  await page.locator('#lname').waitFor({ state: 'visible', timeout: 30000 });
+  await page.locator('#user_professione').waitFor({ state: 'visible', timeout: 30000 });
+  await page.locator('#otp-register-start').waitFor({ state: 'visible', timeout: 30000 });
+
+  await closePossibleOverlays(page);
+  await wait(1000);
+  await saveDebug(page, 'debug-ww-07-registration-form');
+
+  const firstName = randomFirstName();
+  const lastName = randomLastName();
+
+  await page.locator('#fname').fill(firstName);
+  await page.locator('#lname').fill(lastName);
+  console.log(`[FORM] Nome compilato: ${firstName} ${lastName}`);
+
+  const privateBtn = page.getByRole('button', { name: /i am a private|sono un privato|privato/i }).first();
+  if (await privateBtn.isVisible().catch(() => false)) {
+    await privateBtn.click({ force: true }).catch(() => {});
+    console.log('[FORM] Selezionato profilo private.');
+  }
+
+  const dailyBtn = page.getByRole('button', { name: /daily|giornaliera/i }).first();
+  if (await dailyBtn.isVisible().catch(() => false)) {
+    await dailyBtn.click({ force: true }).catch(() => {});
+    console.log('[FORM] Newsletter selezionata.');
+  }
+
+  await page.locator('#user_professione').selectOption({ label: 'Employee' }).catch(async () => {
+    await page.locator('#user_professione').selectOption({ value: 'Employee' }).catch(async () => {
+      await page.locator('#user_professione').selectOption({ index: 2 });
+    });
+  });
+  console.log('[FORM] Job position selezionata.');
+
+  await page.locator('#terms').check().catch(async () => {
+    await page.locator('#terms').setChecked(true);
+  });
+
+  const terms2 = page.locator('#terms-2');
+  if (await terms2.count()) {
+    await terms2.check().catch(async () => {
+      await terms2.setChecked(true).catch(() => {});
+    });
+  }
+
+  const terms3 = page.locator('#terms-3');
+  if (await terms3.count()) {
+    await terms3.check().catch(async () => {
+      await terms3.setChecked(true).catch(() => {});
+    });
+  }
+
+  console.log('[FORM] Checkbox compilate.');
+
+  await closePossibleOverlays(page);
+  await wait(1000);
+
+  const signUpBtn = page.locator('#otp-register-start');
+  await signUpBtn.click({ force: true });
+  console.log('[FORM] Bottone conferma registrazione cliccato.');
+
+  await wait(3000);
+  await saveDebug(page, 'debug-ww-07b-after-signup-click');
+}
+
+async function waitForSuccessModal(page) {
+  for (let i = 0; i < 25; i++) {
+    const successVisible =
+      await page.locator('text=Thank you').first().isVisible().catch(() => false) ||
+      await page.locator('text=For registering').first().isVisible().catch(() => false) ||
+      await page.locator('text=Welcome back to the We-Wealth World').first().isVisible().catch(() => false) ||
+      await page.locator('button:has-text("COMPLETE"), button:has-text("CLOSE")').first().isVisible().catch(() => false);
+
+    const formStillVisible =
+      await page.locator('#fname').isVisible().catch(() => false) ||
+      await page.locator('#lname').isVisible().catch(() => false) ||
+      await page.locator('#otp-register-start').isVisible().catch(() => false);
+
+    if (successVisible) return true;
+    if (formStillVisible) {
+      console.log('[SUCCESS] Il form è ancora visibile, attendo ancora...');
+    }
+
+    await wait(1500);
+  }
+
+  return false;
+}
+
+async function captureSuccessAndEmail(page) {
+  console.log('[SUCCESS] Attendo schermata finale di conferma...');
+
+  const success = await waitForSuccessModal(page);
+  if (!success) {
+    throw new Error('La schermata finale con check di conferma non è comparsa.');
+  }
+
+  await wait(2000);
+
+  const finalShot = 'registrazione-confermata.png';
+  await page.screenshot({ path: finalShot, fullPage: true });
+  console.log(`[SCREENSHOT] Screenshot finale salvato: ${finalShot}`);
+
+  await saveDebug(page, 'debug-ww-08-registration-success');
+  await sendSuccessEmail(finalShot);
+}
+
+async function main() {
+  const desktop = devices['Desktop Chrome'];
+  const browser = await chromium.launch({ headless: true });
+
+  const context = await browser.newContext({
+    ...desktop,
+    viewport: { width: 1440, height: 900 },
+    locale: 'it-IT',
+    timezoneId: 'Europe/Rome'
+  });
+
+  const page = await context.newPage();
+
+  try {
+    await page.goto('https://www.we-wealth.com', {
+      waitUntil: 'domcontentloaded',
+      timeout: 120000
+    });
+
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    await wait(8000);
+    await saveDebug(page, 'debug-ww-01-home');
+
+    await closePossibleOverlays(page);
+
+    const cookieClicked = await jsClick(page, 'a.ww-cookiebanner__brand');
+    console.log(cookieClicked ? 'Cookie banner chiuso via JS.' : 'Cookie banner non trovato.');
+    await wait(2000);
+    await saveDebug(page, 'debug-ww-02-after-cookie');
+
+    const accediClicked = await jsClick(page, 'a.btn-accedi.otp-popup-button');
+    if (!accediClicked) {
+      throw new Error('Non trovato a.btn-accedi.otp-popup-button nel DOM');
+    }
+    console.log('Link Accedi cliccato via JS.');
+
+    await wait(3000);
+    await saveDebug(page, 'debug-ww-03-after-accedi');
+
+    const preEmailClicked = await jsClick(page, '#otp-submit-button');
+    if (preEmailClicked) {
+      console.log('Bottone otp-submit-button cliccato.');
+    } else {
+      try {
+        await page.locator('#otp-submit-button').waitFor({ state: 'visible', timeout: 10000 });
+        await jsClick(page, '#otp-submit-button');
+        console.log('Bottone otp-submit-button cliccato (dopo attesa).');
+      } catch (_) {
+        console.log('otp-submit-button non trovato, procedo.');
+      }
+    }
+
+    await wait(3000);
+    await saveDebug(page, 'debug-ww-04-before-email');
+
+    const emailInput = page.locator('#otp-email').first();
+    await emailInput.waitFor({ state: 'visible', timeout: 20000 });
+
+    const email = generaEmailWeWealth();
+    console.log(`Email generata: ${email}`);
+    await emailInput.fill(email);
+    console.log(`Email inserita: ${email}`);
+
+    const inviaCodiceBtn = page.locator('#otp-start-process').first();
+    await inviaCodiceBtn.waitFor({ state: 'visible', timeout: 15000 });
+    await inviaCodiceBtn.click();
+    console.log('Bottone "Invia codice via email" cliccato.');
+
+    await wait(5000);
+    await saveDebug(page, 'debug-ww-05-after-send-otp');
+    console.log('Step 1 completato — email OTP inviata.');
+
+    console.log('Attendo OTP via IMAP...');
+    const otp = await pollOtpFromGmail(email, 12, 10000);
+
+    if (!otp) {
+      console.log('OTP non letta via IMAP.');
+    } else {
+      console.log(`OTP letta da Gmail via IMAP: ${otp}`);
+
+      await page.bringToFront();
+
+      const otpInput = page.locator('#otp-code, input[name="otp"], input[type="tel"]').first();
+      await otpInput.waitFor({ state: 'visible', timeout: 20000 });
+      await otpInput.fill(otp);
+      console.log('OTP inserita nel campo.');
+
+      await wait(1000);
+
+      const confermaBtn = page.locator('#otp-check-button');
+      await confermaBtn.waitFor({ state: 'visible', timeout: 20000 });
+      await confermaBtn.click();
+      console.log('Conferma OTP cliccata.');
+
+      await wait(2000);
+      await saveDebug(page, 'debug-ww-06-after-otp');
+
+      const nextStep = await waitForEitherRegistrationOrSuccess(page);
+      console.log(`[FLOW] Step successivo rilevato: ${nextStep}`);
+
+      if (nextStep === 'registration') {
+        await fillRegistrationForm(page);
+      }
+
+      await captureSuccessAndEmail(page);
+    }
+
+    console.log('Script completato con successo.');
+  } catch (error) {
+    console.error('Errore durante esecuzione:', error);
+    await saveDebug(page, 'debug-error');
+    process.exitCode = 1;
+  } finally {
+    await browser.close();
+  }
+}
+
+main();
